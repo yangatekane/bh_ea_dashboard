@@ -1,13 +1,15 @@
 name: bh_ea
 channels:
+  - gimli
   - conda-forge
+  - defaults
 dependencies:
   - python=3.11
-  - pip
   - flask
-  - pandas
   - plotly
-  - gunicorn
-  - matplotlib
+  - pandas
   - numpy
-  - pygimli
+  - pip
+  - pip:
+      - pygimli
+      - gunicorn
