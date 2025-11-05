@@ -5,18 +5,25 @@ import plotly.io as pio
 import os, io
 from processing.ert_processor import process_ert_data
 
+# Initialize Flask app
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = '/tmp'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
+# ✅ Cloud Run only allows writing to /tmp (use it safely)
+UPLOAD_FOLDER = "/tmp/uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB max
 
 # Demo dataset defaults
 default_data = {
-    'District': ['Amathole', 'BCM', 'Chris Hani'] * 2,
-    'Borehole_Type': ['Production','Production','Production','Domestic','Domestic','Domestic'],
-    'Depth_m': [120, 110, 125, 60, 55, 65],
-    'Yield_Lps': [5.2, 4.8, 6.1, 1.8, 2.1, 2.3],
-    'Cost_USD': [7285, 7200, 7350, 3723, 3700, 3740]
+    "District": ["Amathole", "BCM", "Chris Hani"] * 2,
+    "Borehole_Type": ["Production", "Production", "Production", "Domestic", "Domestic", "Domestic"],
+    "Depth_m": [120, 110, 125, 60, 55, 65],
+    "Yield_Lps": [5.2, 4.8, 6.1, 1.8, 2.1, 2.3],
+    "Cost_USD": [7285, 7200, 7350, 3723, 3700, 3740]
 }
+
 df = pd.DataFrame(default_data)
 ert_processed_img = None
 ert_processed_csv = None
