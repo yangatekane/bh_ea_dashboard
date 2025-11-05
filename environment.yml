@@ -1,0 +1,13 @@
+name: bh_ea
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - flask
+  - pandas
+  - plotly
+  - gunicorn
+  - matplotlib
+  - numpy
+  - pygimli
