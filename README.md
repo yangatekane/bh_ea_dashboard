@@ -26,3 +26,14 @@ Deployed on **Google Cloud Run**, BH-EA helps engineers and municipalities reduc
 ---
 
 ## 🏗️ Architecture
+## 🧠 Google AI Studio Integration
+This project was co-developed using **Google AI Studio**, where part of the application logic and interface design were generated collaboratively with Gemini.  
+See [`ai_studio_prompts.md`](./ai_studio_prompts.md) for a record of the generated prompts and iterations.
+
+---
+
+## 🏗️ Architecture Overview
+![Architecture Diagram](./docs/architecture_diagram.png)
+
+**Flow:**
+Field Data / ERT CSV → (Optional) Cloud Storage → Cloud Run (Flask + Plotly + PyGIMLi) → Gemini AI (Insights Summarization) → Web Dashboard
