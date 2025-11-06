@@ -34,31 +34,30 @@ def build_dashboard(dataframe):
     """
     Generate dashboard metrics and Plotly visuals.
     Detects missing columns and reports user-facing alerts instead of crashing.
+    Automatically normalizes column names (case-insensitive).
     """
-    dataframe.columns = [c.lower() for c in dataframe.columns]
-    required_cols = ['yield_lps', 'cost_usd', 'depth_m']
-    missing_cols = [col for col in required_cols if col not in dataframe.columns]
+    # --- Normalize column names ---
+    dataframe.columns = [c.strip().lower() for c in dataframe.columns]
     alerts = []
 
-    # --- Add alerts for missing columns ---
-    if missing_cols:
-        alerts.append(
-            f"⚠️ Missing required fields: {', '.join(missing_cols)} — using defaults."
-        )
-
-    # Ensure all required columns exist for downstream calculations
+    # --- Expected columns (lowercase form) ---
+    required_cols = ['yield_lps', 'cost_usd', 'depth_m']
     for col in required_cols:
         if col not in dataframe.columns:
             dataframe[col] = np.nan
+            alerts.append(f"⚠ Missing field '{col}' — using default NaN values.")
 
     # --- Compute metrics safely ---
-    total_bh = len(dataframe)
-    avg_yield = round(dataframe['yield_lps'].mean(skipna=True) if 'yield_lps' in dataframe.columns else 0, 2)
-    avg_cost = round(dataframe['cost_usd'].mean(skipna=True) if 'cost_usd' in dataframe.columns else 0, 2)
+    try:
+        total_bh = len(dataframe)
+        avg_yield = round(dataframe['yield_lps'].mean(skipna=True) or 0, 2)
+        avg_cost = round(dataframe['cost_usd'].mean(skipna=True) or 0, 2)
+        proj_savings = round(total_bh * avg_cost * 0.25, 2)
+    except Exception as e:
+        alerts.append(f"⚠ Metric computation failed: {e}")
+        total_bh, avg_yield, avg_cost, proj_savings = 0, 0, 0, 0
 
-    proj_savings = round(total_bh * avg_cost * 0.25, 2)
-
-    # --- Plotly visualization ---
+    # --- Visualization ---
     fig = px.scatter(
         dataframe.fillna(0),
         x='cost_usd', y='yield_lps',
@@ -70,25 +69,17 @@ def build_dashboard(dataframe):
     fig.update_layout(template='plotly_white', height=480)
     graph_html = pio.to_html(fig, full_html=False)
 
-    # --- Format alerts as floating toast notification (dark theme styling) ---
+    # --- Toast-style alert block ---
     alert_html = ""
     if alerts:
         alert_html = (
-            '<div id="toast-container" '
-            'style="position:fixed;top:20px;right:20px;z-index:9999;'
-            'background:rgba(10,30,80,0.9);border-left:6px solid #00b4d8;'
-            'padding:14px 18px;border-radius:10px;color:#f8f9fa;'
-            'font-family:Arial,sans-serif;font-size:14px;'
-            'box-shadow:0 4px 10px rgba(0,0,0,0.25);'
-            'opacity:0;transition:opacity 0.6s ease-in-out;">'
-            + "<br>".join(alerts) +
-            '</div>'
-            '<script>'
-            'var toast=document.getElementById("toast-container");'
-            'setTimeout(function(){toast.style.opacity=1;},200);'
-            'setTimeout(function(){toast.style.opacity=0;},6000);'
-            'setTimeout(function(){toast.remove();},7000);'
-            '</script>'
+            '<div id="toast-alert" style="position:fixed;top:20px;right:20px;'
+            'background:rgba(10,30,80,0.85);border-left:6px solid #00b4d8;'
+            'padding:12px 16px;border-radius:10px;color:#f8f9fa;'
+            'font-family:Arial,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,0.3);'
+            'z-index:9999;">' + "<br>".join(alerts) + '</div>'
+            '<script>setTimeout(()=>{const t=document.getElementById("toast-alert");'
+            'if(t)t.style.display="none";},8000);</script>'
         )
 
     return dict(
@@ -96,8 +87,9 @@ def build_dashboard(dataframe):
         avg_yield=avg_yield,
         avg_cost=avg_cost,
         proj_savings=proj_savings,
-        plot_html=alert_html + graph_html  # combine alerts + chart
+        plot_html=alert_html + graph_html
     )
+
 
 def process_bh_ea_csv(file_path):
     """
