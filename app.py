@@ -53,8 +53,9 @@ def build_dashboard(dataframe):
 
     # --- Compute metrics safely ---
     total_bh = len(dataframe)
-    avg_yield = round(dataframe['yield_lps'].mean(skipna=True) or 0, 2)
-    avg_cost = round(dataframe['cost_usd'].mean(skipna=True) or 0, 2)
+    avg_yield = round(dataframe['yield_lps'].mean(skipna=True) if 'yield_lps' in dataframe.columns else 0, 2)
+    avg_cost = round(dataframe['cost_usd'].mean(skipna=True) if 'cost_usd' in dataframe.columns else 0, 2)
+
     proj_savings = round(total_bh * avg_cost * 0.25, 2)
 
     # --- Plotly visualization ---
