@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, send_from_directory, url_for
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.io as pio
 import os, io
@@ -45,6 +46,57 @@ def build_dashboard(dataframe):
     return dict(total_bh=total_bh, avg_yield=avg_yield, avg_cost=avg_cost,
                 proj_savings=proj_savings, plot_html=graph_html)
 
+def process_bh_ea_csv(file_path):
+    """
+    Cleans and augments Borehole Exploration/Surveying CSV data for BH-EA dashboard.
+    Handles semicolon delimiters, spacing, and missing derived fields.
+    """
+    # --- Load & Detect Separator ---
+    try:
+        df = pd.read_csv(file_path, delimiter=';')
+    except Exception:
+        df = pd.read_csv(file_path)  # fallback to comma
+    
+    # --- Clean Headers ---
+    df.columns = [c.strip().replace(" ", "_") for c in df.columns]
+    
+    # --- Convert numeric fields safely ---
+    numeric_cols = [
+        "Depth_m", "Static_WL_m_bgl", "Dynamic_WL_m_bgl",
+        "Yield_Lps", "Drawdown_m", "Specific_Capacity_Lps_per_m",
+        "Cost_USD"
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = (
+                df[col].astype(str)
+                .str.replace(",", ".", regex=False)
+                .str.extract(r"([\d\.]+)", expand=False)
+                .astype(float)
+            )
+    
+    # --- Compute missing fields ---
+    # Drawdown
+    if "Drawdown_m" not in df.columns or df["Drawdown_m"].isnull().any():
+        if "Static_WL_m_bgl" in df.columns and "Dynamic_WL_m_bgl" in df.columns:
+            df["Drawdown_m"] = df["Dynamic_WL_m_bgl"] - df["Static_WL_m_bgl"]
+    
+    # Specific Capacity
+    if "Specific_Capacity_Lps_per_m" not in df.columns or df["Specific_Capacity_Lps_per_m"].isnull().any():
+        if "Yield_Lps" in df.columns and "Drawdown_m" in df.columns:
+            df["Specific_Capacity_Lps_per_m"] = df["Yield_Lps"] / df["Drawdown_m"].replace(0, np.nan)
+    
+    # --- Clean outliers or negatives ---
+    df.loc[df["Drawdown_m"] < 0, "Drawdown_m"] = np.nan
+    df.loc[df["Specific_Capacity_Lps_per_m"] < 0, "Specific_Capacity_Lps_per_m"] = np.nan
+    
+    # --- Optional derived metric: Cost per meter ---
+    if "Depth_m" in df.columns and "Cost_USD" in df.columns:
+        df["Cost_per_m_USD"] = df["Cost_USD"] / df["Depth_m"].replace(0, np.nan)
+    
+    # --- Return clean DataFrame ---
+    return df
+
 @app.route('/', methods=['GET','POST'])
 def index():
     global df, ert_processed_img, ert_processed_csv, ert_uploaded_img
@@ -56,11 +108,13 @@ def index():
             f = request.files['file']
             if f and f.filename.endswith('.csv'):
                 try:
-                    content = f.read()
-                    df = pd.read_csv(io.BytesIO(content))
-                    message = (message or '') + f' ✅ Loaded {len(df)} records from {f.filename}'
+                    save_path = os.path.join(app.config['UPLOAD_FOLDER'], f.filename)
+                    f.save(save_path)
+                    df = process_bh_ea_csv(save_path)  # ✅ use the smart parser
+                    message = (message or '') + f' ✅ Loaded and processed {len(df)} records from {f.filename}'
                 except Exception as e:
                     message = (message or '') + f' ⚠️ CSV error: {e}'
+
         # ERT raw data (.dat/.xyz/.csv grid) → process with PyGIMLi if available, else fallback renderer
         if 'ert_data' in request.files:
             dat = request.files['ert_data']
