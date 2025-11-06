@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 💧 BH-EA | Borehole Exploration & Surveying Analytics  
 **YGE BHI (Pty) Ltd | Reg. No. 2017/452107/07**
 
