@@ -99,8 +99,9 @@ def build_dashboard(dataframe):
     main_fig.update_layout(template='plotly_white', height=480)
 
     # --- Goldilocks / Trouble thresholds (manual logic) ---
-    gold_mask = (plot_df['yield_lps'] > 1.1) & (plot_df['cost_usd'] < 2800)
-    trou_mask = (plot_df['yield_lps'] < 0.8) & (plot_df['cost_usd'] > 4000)
+    gold_mask = (plot_df['yield_lps'] > YIELD_GOLD_MIN) & (plot_df['cost_usd'] < COST_GOLD_MAX)
+    trou_mask = (plot_df['yield_lps'] < YIELD_TROUBLE_MAX) & (plot_df['cost_usd'] > COST_TROUBLE_MIN)
+
 
     # --- Add labeled regions (no ellipse, only text annotations) ---
     annotations = []
@@ -126,6 +127,15 @@ def build_dashboard(dataframe):
         ))
     main_fig.update_layout(annotations=annotations)
 
+    # --- Add dotted reference lines for zones ---
+# --- Add dynamic dotted reference lines for user thresholds ---
+    main_fig.add_hline(y=YIELD_GOLD_MIN, line_dash="dot", line_color="#2ecc71", opacity=0.5)
+    main_fig.add_vline(x=COST_GOLD_MAX, line_dash="dot", line_color="#2ecc71", opacity=0.5)
+    main_fig.add_hline(y=YIELD_TROUBLE_MAX, line_dash="dot", line_color="#e74c3c", opacity=0.5)
+    main_fig.add_vline(x=COST_TROUBLE_MIN, line_dash="dot", line_color="#e74c3c", opacity=0.5)
+
+
+
     main_plot_html = pio.to_html(main_fig, full_html=False)
 
     # --- Second scatter: Monthly Volume vs Cost ---
@@ -143,6 +153,23 @@ def build_dashboard(dataframe):
         cycle_plot_html = pio.to_html(cycle_fig, full_html=False)
     else:
         cycle_plot_html = "<p style='color:gray;font-style:italic;'>No Monthly Volume data available.</p>"
+
+        # --- Third scatter: Cycle Duration vs Yield (Efficiency Map) ---
+    if {'cycle_duration_hr', 'yield_lps'} <= set(plot_df.columns):
+        efficiency_fig = px.scatter(
+            plot_df,
+            x='cycle_duration_hr', y='yield_lps',
+            color='efficiency_index' if 'efficiency_index' in plot_df.columns else None,
+            size='storage_coefficient' if 'storage_coefficient' in plot_df.columns else None,
+            hover_data=['cost_usd', 'transmissivity_m2_per_day', 'storage_coefficient'],
+            title='Cycle Duration vs Yield (Efficiency Map)',
+            color_continuous_scale='Turbo'
+        )
+        efficiency_fig.update_layout(template='plotly_white', height=480)
+        efficiency_plot_html = pio.to_html(efficiency_fig, full_html=False)
+    else:
+        efficiency_plot_html = "<p style='color:gray;font-style:italic;'>No Pumping Cycle data available.</p>"
+
 
     # --- Toast alert (persisting, top-right) ---
     alert_html = ""
@@ -167,8 +194,10 @@ def build_dashboard(dataframe):
         avg_volume=avg_volume,
         proj_savings=proj_savings,
         plot_html=alert_html + main_plot_html,
-        cycle_plot_html=cycle_plot_html
+        cycle_plot_html=cycle_plot_html,
+        efficiency_plot_html=efficiency_plot_html 
     )
+
 
 
 
@@ -223,27 +252,6 @@ def process_bh_ea_csv(file_path):
     if "Specific_Capacity_Lps_per_m" not in df.columns or df["Specific_Capacity_Lps_per_m"].isnull().any():
         if "Yield_Lps" in df.columns and "Drawdown_m" in df.columns:
             df["Specific_Capacity_Lps_per_m"] = df["Yield_Lps"] / df["Drawdown_m"].replace(0, np.nan)
-
-        # --- Derived metrics for cycle and hydraulic performance ---
-    # Compute total pumping cycle duration
-    if "Pumping_Hours" in df.columns and "Recovery_Hours" in df.columns:
-        df["Cycle_Duration_hr"] = df["Pumping_Hours"] + df["Recovery_Hours"]
-
-    # Estimate monthly volume (L/s × hours/day × days/month)
-    if "Yield_Lps" in df.columns:
-        df["Monthly_Volume_m3"] = (
-            pd.to_numeric(df["Yield_Lps"], errors="coerce") * 3600 * 24 * 30 / 1000
-        )  # convert L/s → m³/month
-
-    # Optional: estimate transmissivity & storage if not provided
-    if "Transmissivity_m2_per_day" not in df.columns:
-        df["Transmissivity_m2_per_day"] = (
-            df["Specific_Capacity_Lps_per_m"] * 86400 * 0.001
-        )  # empirical proxy
-
-    if "Storage_Coefficient" not in df.columns:
-        df["Storage_Coefficient"] = np.random.uniform(1e-4, 1e-3, len(df))
-
 
     # --- Clean outliers or negatives ---
     if "Drawdown_m" in df.columns:
