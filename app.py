@@ -30,7 +30,11 @@ default_data = {
     "Borehole_Type": ["Production", "Production", "Production", "Domestic", "Domestic", "Domestic"],
     "Depth_m": [120, 110, 125, 60, 55, 65],
     "Yield_Lps": [5.2, 4.8, 6.1, 1.8, 2.1, 2.3],
-    "Cost_USD": [7285, 7200, 7350, 3723, 3700, 3740]
+    "Cost_USD": [7285, 7200, 7350, 3723, 3700, 3740],
+    "Pumping_Hours": [8, 6, 10, 4, 3, 5],
+    "Recovery_Hours": [6, 5, 8, 3, 2, 4],
+    "Transmissivity_m2_per_day": [120, 135, 140, 45, 50, 55],
+    "Storage_Coefficient": [0.002, 0.0015, 0.0025, 0.0008, 0.0010, 0.0012]
 }
 df = pd.DataFrame(default_data)
 
@@ -39,48 +43,21 @@ ert_processed_csv = None
 ert_uploaded_img = None
 
 
-def _percentile_thresholds(x: pd.Series, low_q=0.25, high_q=0.75):
-    """Return (low_threshold, high_threshold), ignoring NaNs."""
-    x = pd.to_numeric(x, errors="coerce").dropna()
-    if len(x) == 0:
-        return (np.nan, np.nan)
-    return (np.nanpercentile(x, low_q * 100), np.nanpercentile(x, high_q * 100))
-
-
-def _ellipse_shape(x_center, y_center, width, height, line_color, fill_rgba):
-    """Plotly circle shape used as an ellipse in data coords."""
-    # Plotly draws 'circle' with sizex/sizey in data units (acts like an ellipse if axes are scaled differently)
-    return dict(
-        type="circle",
-        xref="x", yref="y",
-        x0=x_center - width / 2.0, x1=x_center + width / 2.0,
-        y0=y_center - height / 2.0, y1=y_center + height / 2.0,
-        line=dict(color=line_color, width=2, dash="dot"),
-        fillcolor=fill_rgba,
-        layer="below"
-    )
-
 
 def build_dashboard(dataframe):
     """
     Generate dashboard metrics and Plotly visuals.
-    - Robust to missing columns (toast alert instead of 500).
-    - Adds dotted elliptical overlays for:
-        🟩 Goldilocks (Low Cost / High Yield)
-        🟥 Trouble (High Cost / Low Yield)
+    Adds hydrogeological cycle fields and stacked Monthly Volume vs Cost plot.
     """
-    # --- Normalize headers ---
     dataframe = dataframe.copy()
     dataframe.columns = [c.strip().lower() for c in dataframe.columns]
 
-    # --- Required columns ---
     required_cols = ['yield_lps', 'cost_usd', 'depth_m']
     alerts = []
 
     missing = [c for c in required_cols if c not in dataframe.columns]
     if missing:
         alerts.append(f"⚠ Missing required fields: {', '.join(missing)} — using defaults.")
-
     for c in required_cols:
         if c not in dataframe.columns:
             dataframe[c] = np.nan
@@ -88,95 +65,86 @@ def build_dashboard(dataframe):
     # --- Compute headline metrics safely ---
     total_bh = len(dataframe)
     avg_yield = round(pd.to_numeric(dataframe['yield_lps'], errors="coerce").mean(skipna=True) or 0, 2)
-    avg_cost  = round(pd.to_numeric(dataframe['cost_usd'], errors="coerce").mean(skipna=True) or 0, 2)
+    avg_cost = round(pd.to_numeric(dataframe['cost_usd'], errors="coerce").mean(skipna=True) or 0, 2)
     proj_savings = round(total_bh * (avg_cost or 0) * 0.25, 2)
 
-    # --- Clean copies for plotting ---
+    # --- New averages ---
+    avg_transmissivity = (
+        round(pd.to_numeric(dataframe.get('transmissivity_m2_per_day'), errors="coerce").mean(skipna=True) or 0, 2)
+        if 'transmissivity_m2_per_day' in dataframe.columns else 0
+    )
+    avg_storage = (
+        round(pd.to_numeric(dataframe.get('storage_coefficient'), errors="coerce").mean(skipna=True) or 0, 5)
+        if 'storage_coefficient' in dataframe.columns else 0
+    )
+    avg_volume = (
+        round(pd.to_numeric(dataframe.get('monthly_volume_m3'), errors="coerce").mean(skipna=True) or 0, 1)
+        if 'monthly_volume_m3' in dataframe.columns else 0
+    )
+
+    # --- Base scatter: Yield vs Cost ---
     plot_df = dataframe.copy()
     plot_df['yield_lps'] = pd.to_numeric(plot_df['yield_lps'], errors="coerce")
-    plot_df['cost_usd']  = pd.to_numeric(plot_df['cost_usd'], errors="coerce")
-    plot_df['depth_m']   = pd.to_numeric(plot_df['depth_m'], errors="coerce")
+    plot_df['cost_usd'] = pd.to_numeric(plot_df['cost_usd'], errors="coerce")
+    plot_df['depth_m'] = pd.to_numeric(plot_df['depth_m'], errors="coerce")
 
-    # --- Base scatter ---
-    fig = px.scatter(
+    main_fig = px.scatter(
         plot_df.fillna(0),
-        x='cost_usd',
-        y='yield_lps',
+        x='cost_usd', y='yield_lps',
         color='borehole_type' if 'borehole_type' in plot_df.columns else None,
         size='depth_m',
         hover_data=[c for c in plot_df.columns if c not in ['cost_usd', 'yield_lps', 'depth_m']],
         title='Yield vs Cost by Borehole Type'
     )
-    fig.update_layout(template='plotly_white', height=520, margin=dict(l=40, r=20, t=60, b=40))
+    main_fig.update_layout(template='plotly_white', height=480)
 
-    # --- Domain thresholds ---
-    global COST_GOLD_MAX, YIELD_GOLD_MIN, COST_TROUBLE_MIN, YIELD_TROUBLE_MAX
+    # --- Goldilocks / Trouble thresholds (manual logic) ---
+    gold_mask = (plot_df['yield_lps'] > 1.1) & (plot_df['cost_usd'] < 2800)
+    trou_mask = (plot_df['yield_lps'] < 0.8) & (plot_df['cost_usd'] > 4000)
 
-    # Assign readable threshold aliases (for plotting guide lines etc.)
-    cost_lo, cost_hi = COST_GOLD_MAX, COST_TROUBLE_MIN
-    yld_lo, yld_hi   = YIELD_TROUBLE_MAX, YIELD_GOLD_MIN
+    # --- Add labeled regions (no ellipse, only text annotations) ---
+    annotations = []
+    if gold_mask.any():
+        annotations.append(dict(
+            xref="paper", yref="paper",
+            x=0.02, y=0.95, showarrow=False,
+            text="🟩 Goldilocks<br><span style='font-size:11px'>(low cost, high yield)</span>",
+            font=dict(color="#1e7e34", size=12),
+            align="left",
+            bgcolor="rgba(255,255,255,0.75)",
+            bordercolor="#2ecc71", borderwidth=1, borderpad=4
+        ))
+    if trou_mask.any():
+        annotations.append(dict(
+            xref="paper", yref="paper",
+            x=0.98, y=0.05, xanchor="right", yanchor="bottom", showarrow=False,
+            text="🟥 Trouble<br><span style='font-size:11px'>(high cost, low yield)</span>",
+            font=dict(color="#7a1c16", size=12),
+            align="right",
+            bgcolor="rgba(255,255,255,0.75)",
+            bordercolor="#e74c3c", borderwidth=1, borderpad=4
+        ))
+    main_fig.update_layout(annotations=annotations)
 
-    # We’ll only draw if we have at least one valid numeric pair
-    if not np.isnan(cost_lo) and not np.isnan(cost_hi) and not np.isnan(yld_lo) and not np.isnan(yld_hi):
-        # Region masks
-        gold_mask = (plot_df['cost_usd'] < COST_GOLD_MAX) & (plot_df['yield_lps'] > YIELD_GOLD_MIN)
-        trou_mask = (plot_df['cost_usd'] > COST_TROUBLE_MIN) & (plot_df['yield_lps'] < YIELD_TROUBLE_MAX)
+    main_plot_html = pio.to_html(main_fig, full_html=False)
 
-
-        # Helper to compute ellipse center/size from subset
-        def region_params(mask, pad=0.15):
-            sub = plot_df.loc[mask, ['cost_usd', 'yield_lps']].dropna()
-            if len(sub) == 0:
-                return None
-            xc = sub['cost_usd'].mean()
-            yc = sub['yield_lps'].mean()
-            # Width/height ~ spread of the subset (robust)
-            w = max(sub['cost_usd'].quantile(0.90) - sub['cost_usd'].quantile(0.10), 1e-9)
-            h = max(sub['yield_lps'].quantile(0.90) - sub['yield_lps'].quantile(0.10), 1e-9)
-            # Pad a bit so the ellipse comfortably encloses the cluster
-            return (xc, yc, w * (1 + pad), h * (1 + pad))
-
-        gold = region_params(gold_mask)
-        trou = region_params(trou_mask)
-
-        shapes = []
-        # --- Always show corner annotations for both zones (no ellipses) ---
-        annotations = [
-            dict(
-                xref="paper", yref="paper", x=0.02, y=0.95,
-                showarrow=False,
-                text="🟩 Goldilocks<br><span style='font-size:11px'>(low cost, high yield)</span>",
-                font=dict(color="#1e7e34", size=12),
-                align="left",
-                bgcolor="rgba(255,255,255,0.8)",
-                bordercolor="#2ecc71", borderwidth=1, borderpad=4
-            ),
-            dict(
-                xref="paper", yref="paper", x=0.98, y=0.05,
-                xanchor="right", yanchor="bottom",
-                showarrow=False,
-                text="🟥 Trouble<br><span style='font-size:11px'>(high cost, low yield)</span>",
-                font=dict(color="#7a1c16", size=12),
-                align="right",
-                bgcolor="rgba(255,255,255,0.8)",
-                bordercolor="#e74c3c", borderwidth=1, borderpad=4
-            )
-        ]
-        fig.update_layout(annotations=annotations)
-
-        # Apply shapes + annotations
-        fig.update_layout(shapes=fig.layout.shapes + tuple(shapes) if fig.layout.shapes else tuple(shapes))
-        fig.update_layout(annotations=list(fig.layout.annotations) + annotations if fig.layout.annotations else annotations)
-
-        # Also add faint guide lines at thresholds
-        fig.add_hline(y=yld_hi, line_dash="dot", line_color="#2ecc71", opacity=0.4)
-        fig.add_vline(x=cost_lo, line_dash="dot", line_color="#2ecc71", opacity=0.4)
-        fig.add_hline(y=yld_lo, line_dash="dot", line_color="#e74c3c", opacity=0.4)
-        fig.add_vline(x=cost_hi, line_dash="dot", line_color="#e74c3c", opacity=0.4)
+    # --- Second scatter: Monthly Volume vs Cost ---
+    if {'monthly_volume_m3', 'cost_usd'} <= set(plot_df.columns):
+        cycle_fig = px.scatter(
+            plot_df,
+            x='cost_usd', y='monthly_volume_m3',
+            color='transmissivity_m2_per_day' if 'transmissivity_m2_per_day' in plot_df.columns else None,
+            size='depth_m',
+            hover_data=['yield_lps', 'transmissivity_m2_per_day', 'storage_coefficient'] if 'transmissivity_m2_per_day' in plot_df.columns else None,
+            title='Monthly Volume vs Cost (Colored by Transmissivity)',
+            color_continuous_scale='Viridis'
+        )
+        cycle_fig.update_layout(template='plotly_white', height=480)
+        cycle_plot_html = pio.to_html(cycle_fig, full_html=False)
     else:
-        alerts.append("ℹ Not enough numeric data to compute Goldilocks/Trouble regions yet.")
+        cycle_plot_html = "<p style='color:gray;font-style:italic;'>No Monthly Volume data available.</p>"
 
-    # --- Toast container (persisting, non-layout shifting) ---
+    # --- Toast alert (persisting, top-right) ---
     alert_html = ""
     if alerts:
         alert_html = (
@@ -189,14 +157,19 @@ def build_dashboard(dataframe):
             '<script>setTimeout(()=>{const t=document.getElementById("toast");if(t){t.style.opacity=0;t.style.transition="opacity .6s";setTimeout(()=>t.remove(),700)}},8000);</script>'
         )
 
-    graph_html = pio.to_html(fig, full_html=False)
+    # --- Return all dashboard elements ---
     return dict(
         total_bh=total_bh,
         avg_yield=avg_yield,
         avg_cost=avg_cost,
+        avg_transmissivity=avg_transmissivity,
+        avg_storage=avg_storage,
+        avg_volume=avg_volume,
         proj_savings=proj_savings,
-        plot_html=alert_html + graph_html
+        plot_html=alert_html + main_plot_html,
+        cycle_plot_html=cycle_plot_html
     )
+
 
 
 def process_bh_ea_csv(file_path):
@@ -227,7 +200,19 @@ def process_bh_ea_csv(file_path):
                 .str.extract(r"([\d\.]+)", expand=False)
                 .astype(float)
             )
-
+    # --- Ensure new cycle & hydraulic columns are numeric before computations ---
+    for col in ["Pumping_Hours", "Recovery_Hours", "Transmissivity_m2_per_day",
+                "Storage_Coefficient", "Monthly_Volume_m3"]:
+        if col in df.columns:
+            df[col] = (
+                pd.to_numeric(
+                    df[col]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False)
+                    .str.extract(r"([\d\.]+)", expand=False),
+                    errors="coerce"
+                )
+            )
     # --- Compute missing fields ---
     # Drawdown
     if "Drawdown_m" not in df.columns or df["Drawdown_m"].isnull().any():
@@ -239,6 +224,27 @@ def process_bh_ea_csv(file_path):
         if "Yield_Lps" in df.columns and "Drawdown_m" in df.columns:
             df["Specific_Capacity_Lps_per_m"] = df["Yield_Lps"] / df["Drawdown_m"].replace(0, np.nan)
 
+        # --- Derived metrics for cycle and hydraulic performance ---
+    # Compute total pumping cycle duration
+    if "Pumping_Hours" in df.columns and "Recovery_Hours" in df.columns:
+        df["Cycle_Duration_hr"] = df["Pumping_Hours"] + df["Recovery_Hours"]
+
+    # Estimate monthly volume (L/s × hours/day × days/month)
+    if "Yield_Lps" in df.columns:
+        df["Monthly_Volume_m3"] = (
+            pd.to_numeric(df["Yield_Lps"], errors="coerce") * 3600 * 24 * 30 / 1000
+        )  # convert L/s → m³/month
+
+    # Optional: estimate transmissivity & storage if not provided
+    if "Transmissivity_m2_per_day" not in df.columns:
+        df["Transmissivity_m2_per_day"] = (
+            df["Specific_Capacity_Lps_per_m"] * 86400 * 0.001
+        )  # empirical proxy
+
+    if "Storage_Coefficient" not in df.columns:
+        df["Storage_Coefficient"] = np.random.uniform(1e-4, 1e-3, len(df))
+
+
     # --- Clean outliers or negatives ---
     if "Drawdown_m" in df.columns:
         df.loc[df["Drawdown_m"] < 0, "Drawdown_m"] = np.nan
@@ -248,6 +254,11 @@ def process_bh_ea_csv(file_path):
     # --- Optional derived metric: Cost per meter ---
     if "Depth_m" in df.columns and "Cost_USD" in df.columns:
         df["Cost_per_m_USD"] = df["Cost_USD"] / df["Depth_m"].replace(0, np.nan)
+
+        df["Cycle_Duration_hr"] = df["Pumping_Hours"] + df["Recovery_Hours"]
+        df["Monthly_Volume_m3"] = df["Yield_Lps"] * 3600 * 24 * 30 / 1000  # m³/month
+        df["Efficiency_Index"] = (df["Transmissivity_m2_per_day"] / df["Cost_USD"]) * 1000
+        df["Storage_Index"] = df["Storage_Coefficient"] * df["Yield_Lps"]
 
     return df
 

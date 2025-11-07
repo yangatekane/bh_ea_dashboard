@@ -55,10 +55,13 @@
   </section>
 
   <section id="kpis">
-    <div class="card"><h2>{{ total_bh }}</h2><p>Boreholes Analyzed</p></div>
-    <div class="card"><h2>{{ avg_yield }} L/s</h2><p>Average Yield</p></div>
-    <div class="card"><h2>${{ avg_cost }}</h2><p>Average Cost</p></div>
-    <div class="card"><h2>${{ proj_savings }}</h2><p>Projected Annual Savings (25%)</p></div>
+    <div class="card">💧 Total Boreholes: <strong>{{ total_bh }}</strong></div>
+    <div class="card">⚙️ Average Yield: <strong>{{ avg_yield }}</strong> L/s</div>
+    <div class="card">💰 Average Cost: <strong>${{ avg_cost }}</strong></div>
+    <div class="card">📉 Projected Savings: <strong>${{ proj_savings }}</strong></div>
+    <div class="card">🌊 Avg Transmissivity: <strong>{{ avg_transmissivity }}</strong> m²/day</div>
+    <div class="card">🧱 Avg Storage Coefficient: <strong>{{ avg_storage }}</strong></div>
+    <div class="card">🏗️ Avg Monthly Volume: <strong>{{ avg_volume }}</strong> m³/month</div>
   </section>
 
   <section id="graph">{{ plot_html | safe }}</section>

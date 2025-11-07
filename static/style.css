@@ -5,8 +5,27 @@ header { background: #004d7a; color: white; padding: 1rem; text-align: center; }
 #upload input, #upload button { margin: 0.5rem; padding: 0.5rem; border-radius: 6px; border: 1px solid #ccc; }
 #upload button { background: #004d7a; color: white; cursor: pointer; }
 .message { color: #004d7a; font-weight: bold; }
-#kpis { display: flex; flex-wrap: wrap; justify-content: center; margin: 1rem; gap: 1rem; }
-.card { background: white; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 190px; text-align: center; padding: 1rem; }
+#kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+.card {
+  background: #f8f9fa;
+  border-radius: 10px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  padding: 14px 16px;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  color: #1a1a1a;
+  text-align: center;
+  transition: transform 0.2s ease;
+}
 .card h2 { margin: 0; color: #004d7a; }
 #ert { text-align: center; margin: 2rem; }
 footer { text-align: center; padding: 1rem; color: #555; font-size: 0.9rem; }
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
