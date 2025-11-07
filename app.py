@@ -17,6 +17,13 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB max
 
+# --- Default thresholds (editable from dashboard) ---
+COST_GOLD_MAX = 1700
+YIELD_GOLD_MIN = 1.7
+COST_TROUBLE_MIN = 4000
+YIELD_TROUBLE_MAX = 0.8
+
+
 # Demo dataset defaults
 default_data = {
     "District": ["Amathole", "BCM", "Chris Hani"] * 2,
@@ -102,15 +109,19 @@ def build_dashboard(dataframe):
     )
     fig.update_layout(template='plotly_white', height=520, margin=dict(l=40, r=20, t=60, b=40))
 
-    # --- Determine thresholds (25th/75th) ---
-    cost_lo, cost_hi = _percentile_thresholds(plot_df['cost_usd'])
-    yld_lo, yld_hi   = _percentile_thresholds(plot_df['yield_lps'])
+    # --- Domain thresholds ---
+    global COST_GOLD_MAX, YIELD_GOLD_MIN, COST_TROUBLE_MIN, YIELD_TROUBLE_MAX
 
-    # We’ll only draw if we have sensible thresholds
+    # Assign readable threshold aliases (for plotting guide lines etc.)
+    cost_lo, cost_hi = COST_GOLD_MAX, COST_TROUBLE_MIN
+    yld_lo, yld_hi   = YIELD_TROUBLE_MAX, YIELD_GOLD_MIN
+
+    # We’ll only draw if we have at least one valid numeric pair
     if not np.isnan(cost_lo) and not np.isnan(cost_hi) and not np.isnan(yld_lo) and not np.isnan(yld_hi):
-        # Regions
-        gold_mask = (plot_df['cost_usd'] <= cost_lo) & (plot_df['yield_lps'] >= yld_hi)
-        trou_mask = (plot_df['cost_usd'] >= cost_hi) & (plot_df['yield_lps'] <= yld_lo)
+        # Region masks
+        gold_mask = (plot_df['cost_usd'] < COST_GOLD_MAX) & (plot_df['yield_lps'] > YIELD_GOLD_MIN)
+        trou_mask = (plot_df['cost_usd'] > COST_TROUBLE_MIN) & (plot_df['yield_lps'] < YIELD_TROUBLE_MAX)
+
 
         # Helper to compute ellipse center/size from subset
         def region_params(mask, pad=0.15):
@@ -129,27 +140,29 @@ def build_dashboard(dataframe):
         trou = region_params(trou_mask)
 
         shapes = []
-        annotations = []
-
-        if gold:
-            xc, yc, w, h = gold
-            shapes.append(_ellipse_shape(xc, yc, w, h, "#2ecc71", "rgba(46, 204, 113, 0.12)"))
-            annotations.append(dict(
-                x=xc, y=yc, xref="x", yref="y", showarrow=False,
+        # --- Always show corner annotations for both zones (no ellipses) ---
+        annotations = [
+            dict(
+                xref="paper", yref="paper", x=0.02, y=0.95,
+                showarrow=False,
                 text="🟩 Goldilocks<br><span style='font-size:11px'>(low cost, high yield)</span>",
-                font=dict(color="#1e7e34", size=12), align="center",
-                bgcolor="rgba(255,255,255,0.7)", bordercolor="#2ecc71", borderwidth=1, borderpad=4
-            ))
-
-        if trou:
-            xc, yc, w, h = trou
-            shapes.append(_ellipse_shape(xc, yc, w, h, "#e74c3c", "rgba(231, 76, 60, 0.12)"))
-            annotations.append(dict(
-                x=xc, y=yc, xref="x", yref="y", showarrow=False,
+                font=dict(color="#1e7e34", size=12),
+                align="left",
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor="#2ecc71", borderwidth=1, borderpad=4
+            ),
+            dict(
+                xref="paper", yref="paper", x=0.98, y=0.05,
+                xanchor="right", yanchor="bottom",
+                showarrow=False,
                 text="🟥 Trouble<br><span style='font-size:11px'>(high cost, low yield)</span>",
-                font=dict(color="#7a1c16", size=12), align="center",
-                bgcolor="rgba(255,255,255,0.7)", bordercolor="#e74c3c", borderwidth=1, borderpad=4
-            ))
+                font=dict(color="#7a1c16", size=12),
+                align="right",
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor="#e74c3c", borderwidth=1, borderpad=4
+            )
+        ]
+        fig.update_layout(annotations=annotations)
 
         # Apply shapes + annotations
         fig.update_layout(shapes=fig.layout.shapes + tuple(shapes) if fig.layout.shapes else tuple(shapes))
@@ -243,6 +256,18 @@ def process_bh_ea_csv(file_path):
 def index():
     global df, ert_processed_img, ert_processed_csv, ert_uploaded_img
     message = None
+    global COST_GOLD_MAX, YIELD_GOLD_MIN, COST_TROUBLE_MIN, YIELD_TROUBLE_MAX
+
+    # --- Threshold update from form ---
+    if 'YIELD_GOLD_MIN' in request.form:
+        try:
+            YIELD_GOLD_MIN = float(request.form.get('YIELD_GOLD_MIN', YIELD_GOLD_MIN))
+            COST_GOLD_MAX = float(request.form.get('COST_GOLD_MAX', COST_GOLD_MAX))
+            YIELD_TROUBLE_MAX = float(request.form.get('YIELD_TROUBLE_MAX', YIELD_TROUBLE_MAX))
+            COST_TROUBLE_MIN = float(request.form.get('COST_TROUBLE_MIN', COST_TROUBLE_MIN))
+        except ValueError:
+            pass
+
 
     if request.method == 'POST':
         # CSV data
@@ -290,6 +315,10 @@ def index():
                            ert_processed_img_url=make_url(ert_processed_img),
                            ert_processed_csv_url=make_url(ert_processed_csv),
                            ert_uploaded_img_url=make_url(ert_uploaded_img),
+                           yield_gold_min=YIELD_GOLD_MIN,
+                           cost_gold_max=COST_GOLD_MAX,
+                           yield_trouble_max=YIELD_TROUBLE_MAX,
+                           cost_trouble_min=COST_TROUBLE_MIN,
                            **metrics)
 
 
