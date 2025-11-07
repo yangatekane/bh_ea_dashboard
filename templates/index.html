@@ -11,6 +11,30 @@
     <h3>Cloud Run Impact Dashboard</h3>
   </header>
 
+  <!-- 🧮 Threshold Controls -->
+  <form id="thresholdForm" method="POST" action="/" style="margin-bottom:20px;">
+    <fieldset style="border:1px solid #ccc;padding:12px;border-radius:10px;background:#f8fafc;">
+      <legend style="font-weight:bold;color:#003366;">Adjust Thresholds (Goldilocks / Trouble Zones)</legend>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+        <label>Goldilocks Yield &gt;
+          <input type="number" step="0.1" name="YIELD_GOLD_MIN" value="{{ yield_gold_min }}" style="width:70px;">
+        </label>
+        <label>Cost &lt;
+          <input type="number" step="100" name="COST_GOLD_MAX" value="{{ cost_gold_max }}" style="width:90px;">
+        </label>
+        <label style="margin-left:15px;">Trouble Yield &lt;
+          <input type="number" step="0.1" name="YIELD_TROUBLE_MAX" value="{{ yield_trouble_max }}" style="width:70px;">
+        </label>
+        <label>Cost &gt;
+          <input type="number" step="100" name="COST_TROUBLE_MIN" value="{{ cost_trouble_min }}" style="width:90px;">
+        </label>
+        <button type="submit" class="btn btn-primary" style="margin-left:12px;background:#003366;color:white;padding:5px 12px;border:none;border-radius:5px;cursor:pointer;">
+          Apply
+        </button>
+      </div>
+    </fieldset>
+  </form>
+
   <section id="upload">
     <form method="POST" enctype="multipart/form-data">
       <div class="row">
