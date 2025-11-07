@@ -1,18 +1,36 @@
-# Base with micromamba for fast conda env
+# ---------------------------------------------------------
+# 🧱 Base Image: Micromamba (fast conda-based build)
+# ---------------------------------------------------------
 FROM mambaorg/micromamba:1.5.8
 
+# Set working directory
 WORKDIR /app
 
-# Copy environment and create env
+# ---------------------------------------------------------
+# 📦 Environment Setup
+# ---------------------------------------------------------
+# Copy environment definition and create environment
 COPY environment.yml /tmp/environment.yml
-RUN micromamba create -y -n bh_ea -f /tmp/environment.yml &&     micromamba clean --all --yes
-SHELL ["/bin/bash", "-lc"]
+RUN micromamba create -y -n bh_ea -f /tmp/environment.yml && \
+    micromamba clean --all --yes
+
+# Add micromamba env to PATH
 ENV MAMBA_DOCKERFILE_ACTIVATE=1
 ENV PATH=/opt/conda/envs/bh_ea/bin:$PATH
+SHELL ["/bin/bash", "-lc"]
 
-# Copy app after env to leverage layer cache
+# ---------------------------------------------------------
+# 📁 Copy Application Code
+# ---------------------------------------------------------
 COPY . /app
 
-# Expose for Cloud Run
+# ---------------------------------------------------------
+# 🌐 Expose Port for Cloud Run
+# ---------------------------------------------------------
+EXPOSE 8080
 ENV PORT=8080
-CMD exec gunicorn -b 0.0.0.0:$PORT app:app
+
+# ---------------------------------------------------------
+# 🚀 Start Flask app with Gunicorn (inside micromamba env)
+# ---------------------------------------------------------
+CMD ["bash", "-lc", "micromamba run -n bh_ea gunicorn -b 0.0.0.0:$PORT app:app"]
