@@ -13,3 +13,4 @@ dependencies:
   - pip:
       - pygimli
       - gunicorn
+      - google-cloud-storage
