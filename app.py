@@ -6,6 +6,8 @@ import plotly.io as pio
 import plotly.graph_objects as go
 import os
 from processing.ert_processor import process_ert_data
+from google.cloud import storage
+import datetime
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -22,6 +24,10 @@ COST_GOLD_MAX = 1700
 YIELD_GOLD_MIN = 1.7
 COST_TROUBLE_MIN = 4000
 YIELD_TROUBLE_MAX = 0.8
+
+# Initialize GCS client
+GCS_BUCKET = "bh-ea-dashboard-uploads"
+storage_client = storage.Client()
 
 
 # Demo dataset defaults
@@ -42,6 +48,21 @@ ert_processed_img = None
 ert_processed_csv = None
 ert_uploaded_img = None
 
+def upload_to_gcs(local_path, remote_name=None):
+    """Upload file to Cloud Storage and return the public URL."""
+    try:
+        bucket = storage_client.bucket(GCS_BUCKET)
+        if not remote_name:
+            filename = os.path.basename(local_path)
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+            remote_name = f"latest/{timestamp}_{filename}"
+        blob = bucket.blob(remote_name)
+        blob.upload_from_filename(local_path)
+        blob.make_public()
+        return blob.public_url
+    except Exception as e:
+        print("⚠️ GCS Upload failed:", e)
+        return None
 
 
 def build_dashboard(dataframe):
@@ -198,9 +219,6 @@ def build_dashboard(dataframe):
         efficiency_plot_html=efficiency_plot_html 
     )
 
-
-
-
 def process_bh_ea_csv(file_path):
     """
     Cleans and augments Borehole Exploration/Surveying CSV data for BH-EA dashboard.
@@ -298,6 +316,9 @@ def index():
                     f.save(save_path)
                     df = process_bh_ea_csv(save_path)  # ✅ smart parser
                     message = (message or '') + f' ✅ Loaded and processed {len(df)} records from {f.filename}'
+                    gcs_url = upload_to_gcs(save_path)
+                    if gcs_url:
+                        message += f' ☁️ Uploaded to Cloud Storage: <a href="{gcs_url}" target="_blank">Open</a>'
                 except Exception as e:
                     message = (message or '') + f' ⚠️ CSV error: {e}'
 
@@ -312,6 +333,9 @@ def index():
                     ert_processed_img = img_path
                     ert_processed_csv = model_path
                     message = (message or '') + f' ✅ ERT data processed: {os.path.basename(dat.filename)}'
+                gcs_url = upload_to_gcs(save_path)
+                if gcs_url:
+                    message += f' ☁️ Uploaded to Cloud Storage: <a href="{gcs_url}" target="_blank">Open</a>'
                 else:
                     message = (message or '') + ' ⚠️ ERT processing failed.'
 
@@ -323,6 +347,10 @@ def index():
                 img.save(img_path)
                 ert_uploaded_img = img_path
                 message = (message or '') + f' ✅ ERT-I image uploaded: {img.filename}'
+                gcs_url = upload_to_gcs(img_path)
+                if gcs_url:
+                    message += f' ☁️ Uploaded to Cloud Storage: <a href="{gcs_url}" target="_blank">Open</a>'
+
 
     metrics = build_dashboard(df)
 
@@ -339,6 +367,31 @@ def index():
                            yield_trouble_max=YIELD_TROUBLE_MAX,
                            cost_trouble_min=COST_TROUBLE_MIN,
                            **metrics)
+
+# --- Health & Status Endpoints for Cloud Run / Monitoring ---
+
+@app.route("/healthz")
+def health_check():
+    """
+    Simple health check for Cloud Run probes.
+    Returns 200 OK if the app is alive.
+    """
+    return {"status": "ok", "service": "bh-ea-dashboard"}, 200
+
+
+@app.route("/status")
+def status():
+    """
+    Detailed runtime status endpoint with UTC timestamp.
+    Useful for uptime checks or dashboard API integration.
+    """
+    import datetime
+    return {
+        "status": "running",
+        "service": "bh-ea-dashboard",
+        "project": "practical-day-179721",
+        "time_utc": datetime.datetime.utcnow().isoformat() + "Z"
+    }, 200
 
 
 @app.route('/uploads/<path:filename>')
