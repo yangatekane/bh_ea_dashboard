@@ -8,6 +8,10 @@ import os
 from processing.ert_processor import process_ert_data
 from google.cloud import storage
 from datetime import datetime, timezone
+from processing.ai_studio_client import analyze_with_ai_studio
+from processing.contour_report import generate_contour_report
+import json
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -63,6 +67,12 @@ def upload_to_gcs(local_path, remote_name=None):
     except Exception as e:
         print("⚠️ GCS Upload failed:", e)
         return None
+
+def upload_json_to_gcs(data: dict, remote_name: str):
+    local = os.path.join(UPLOAD_FOLDER, os.path.basename(remote_name))
+    with open(local, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return upload_to_gcs(local, remote_name)
 
 
 def build_dashboard(dataframe):
@@ -350,7 +360,66 @@ def index():
                 gcs_url = upload_to_gcs(img_path)
                 if gcs_url:
                     message += f' ☁️ Uploaded to Cloud Storage: <a href="{gcs_url}" target="_blank">Open</a>'
+        
+        # === AI Studio auto-run (only if we have a DF and at least an image to analyze) ===
+        try:
+            # Prefer processed ERT image; else fall back to user-uploaded ERT-I image if available
+            base_img_path = ert_processed_img or ert_uploaded_img
+            report_url = None
 
+            if base_img_path:
+                contour_out = os.path.join(app.config['UPLOAD_FOLDER'], "ai_contour_report.png")
+                generate_contour_report(base_img_path, contour_out)
+                report_url = upload_to_gcs(contour_out, remote_name=f"reports/ai_contour_report_{int(datetime.now(timezone.utc).timestamp())}.png")
+
+            # Build compact dataset summary + thresholds (as strings for prompt context)
+            stats = df.describe(include='all').to_dict()
+            thresholds = {
+                "YIELD_GOLD_MIN": YIELD_GOLD_MIN,
+                "COST_GOLD_MAX": COST_GOLD_MAX,
+                "YIELD_TROUBLE_MAX": YIELD_TROUBLE_MAX,
+                "COST_TROUBLE_MIN": COST_TROUBLE_MIN
+            }
+            meta = {
+                "project": "practical-day-179721",
+                "service": "bh-ea-dashboard",
+                "utc": datetime.now(timezone.utc).isoformat(),
+                "counts": {"records": len(df)},
+                "thresholds": thresholds,
+                "headline": {
+                    "avg_yield_lps": float(pd.to_numeric(df.get('yield_lps'), errors='coerce').mean(skipna=True) or 0),
+                    "avg_cost_usd": float(pd.to_numeric(df.get('cost_usd'), errors='coerce').mean(skipna=True) or 0),
+                    "avg_transmissivity_m2_per_day": float(pd.to_numeric(df.get('transmissivity_m2_per_day'), errors='coerce').mean(skipna=True) or 0),
+                    "avg_storage_coeff": float(pd.to_numeric(df.get('storage_coefficient'), errors='coerce').mean(skipna=True) or 0),
+                },
+                "columns": list(df.columns),
+                "stats": stats
+            }
+
+            meta_url = upload_json_to_gcs(meta, remote_name=f"metadata/ai_meta_{int(datetime.now(timezone.utc).timestamp())}.json")
+            dataset_summary_json = json.dumps({"thresholds": thresholds, "headlines": meta["headline"]}, ensure_ascii=False)
+
+            if meta_url and report_url:
+                ai_out = analyze_with_ai_studio(meta_url, report_url, dataset_summary_json)
+                if isinstance(ai_out, dict):
+                    # Show a concise HTML card in the message area
+                    if "interpretation_summary" in ai_out or "raw_text" in ai_out:
+                        summary_txt = ai_out.get("interpretation_summary") or ai_out.get("raw_text", "")
+                        gold_n = len(ai_out.get("goldilocks_sites", [])) if isinstance(ai_out.get("goldilocks_sites"), list) else 0
+                        trou_n = len(ai_out.get("trouble_sites", [])) if isinstance(ai_out.get("trouble_sites"), list) else 0
+                        recs = ai_out.get("recommendations") or []
+                        message = (message or "") + (
+                            "<div style='margin-top:10px;padding:10px;border-radius:10px;background:#0b2447;color:#fff'>"
+                            "<b>🤖 AI Studio Analysis</b><br>"
+                            f"<i>{summary_txt}</i><br>"
+                            f"🟩 Goldilocks Sites: {gold_n} &nbsp;|&nbsp; 🟥 Trouble Sites: {trou_n}<br>"
+                            f"💡 Recs: {', '.join(recs) if recs else '—'}<br>"
+                            f"☁️ <a href='{meta_url}' target='_blank' style='color:#9be7ff'>Metadata JSON</a> &nbsp;|&nbsp; "
+                            f"🗺️ <a href='{report_url}' target='_blank' style='color:#9be7ff'>Contour Report</a>"
+                            "</div>"
+                        )
+        except Exception as e:
+            message = (message or "") + f" ⚠️ AI Studio step skipped: {e}"
 
     metrics = build_dashboard(df)
 

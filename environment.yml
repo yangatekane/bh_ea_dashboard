@@ -15,5 +15,6 @@ dependencies:
       - gunicorn
       - google-cloud-storage
       - opencv-python-headless
+      - requests
       - matplotlib
       - scikit-image
