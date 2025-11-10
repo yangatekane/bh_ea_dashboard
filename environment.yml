@@ -14,3 +14,6 @@ dependencies:
       - pygimli
       - gunicorn
       - google-cloud-storage
+      - opencv-python-headless
+      - matplotlib
+      - scikit-image

@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import os
 from processing.ert_processor import process_ert_data
 from google.cloud import storage
-import datetime
+from datetime import datetime, timezone
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -372,27 +372,19 @@ def index():
 
 @app.route("/healthz")
 def health_check():
-    """
-    Simple health check for Cloud Run probes.
-    Returns 200 OK if the app is alive.
-    """
+    """Cloud Run health/status endpoint (UTC aware)"""
     return {"status": "ok", "service": "bh-ea-dashboard"}, 200
 
 
-@app.route("/status")
+@app.route('/status')
 def status():
-    """
-    Detailed runtime status endpoint with UTC timestamp.
-    Useful for uptime checks or dashboard API integration.
-    """
-    import datetime
+    """Cloud Run health/status endpoint (UTC aware)"""
     return {
-        "status": "running",
-        "service": "bh-ea-dashboard",
         "project": "practical-day-179721",
-        "time_utc": datetime.datetime.utcnow().isoformat() + "Z"
+        "service": "bh-ea-dashboard",
+        "status": "running",
+        "time_utc": datetime.now(timezone.utc).isoformat()
     }, 200
-
 
 @app.route('/uploads/<path:filename>')
 def serve_uploads(filename):
